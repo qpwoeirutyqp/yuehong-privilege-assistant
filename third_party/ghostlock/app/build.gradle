@@ -63,11 +63,30 @@ def resolveNdkDir = {
     throw new GradleException('NDK not found; set ANDROID_NDK_HOME or ndk.dir in local.properties')
 }
 
+def isWindowsHost = {
+    System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+}
+
+def hostExe = { String base -> isWindowsHost() ? "${base}.exe" : base }
+
 def ndkBinDir = {
     def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
     def prebuilt = osName.contains('windows') ? 'windows-x86_64' :
             (osName.contains('mac') ? 'darwin-x86_64' : 'linux-x86_64')
     new File(resolveNdkDir(), "toolchains/llvm/prebuilt/${prebuilt}/bin")
+}
+
+/** 在 NDK 工具链目录里挑出可用的目标 clang 包装器（不同 NDK 版本的 API 级别名不一致）。 */
+def resolveTargetClang = { String target ->
+    def bin = ndkBinDir()
+    def suffix = isWindowsHost() ? '.cmd' : ''
+    def preferred = new File(bin, "${target}${suffix}")
+    if (preferred.isFile()) return preferred.absolutePath
+    def candidates = bin.listFiles()?.findAll {
+        it.isFile() && it.name.startsWith("${target}-") && it.name.endsWith("-clang${suffix}")
+    }?.sort { a, b -> a.name <=> b.name }
+    if (candidates) return candidates.last().absolutePath
+    throw new GradleException("No clang wrapper for ${target} under ${bin}")
 }
 
 def resolveCargoExecutable = {
@@ -187,7 +206,7 @@ tasks.named('preBuild').configure {
 tasks.register('buildGhostlockNative', Exec) {
     description = 'Build the upstream GhostLock native executable with the Android NDK.'
     def ndk = resolveNdkDir()
-    def compiler = new File(ndkBinDir(), 'clang++.exe')
+    def compiler = new File(ndkBinDir(), hostExe('clang++'))
     def output = new File(nativeBuildDir, 'ghostlock')
     workingDir nativeRoot
     doFirst { output.parentFile.mkdirs() }
@@ -215,7 +234,7 @@ tasks.register('prepareGhostlockJniLibs', Copy) {
     into generatedArm64JniLibs
     rename { 'libghostlock.so' }
     doLast {
-        def strip = new File(ndkBinDir(), 'llvm-strip.exe')
+        def strip = new File(ndkBinDir(), hostExe('llvm-strip'))
         def code = new ProcessBuilder(strip.absolutePath, '--strip-all', packagedBinary.absolutePath)
                 .inheritIO().start().waitFor()
         if (code != 0) throw new GradleException("llvm-strip failed with ${code}")
@@ -225,8 +244,8 @@ tasks.register('prepareGhostlockJniLibs', Copy) {
 tasks.register('buildGhostlockExtract', Exec) {
     description = 'Build the upstream Rust OTA/image extractor.'
     def ndkBin = ndkBinDir()
-    def clang = new File(ndkBin, 'aarch64-linux-android34-clang.cmd').absolutePath
-    def ar = new File(ndkBin, 'llvm-ar.exe').absolutePath
+    def clang = resolveTargetClang('aarch64-linux-android34')
+    def ar = new File(ndkBin, hostExe('llvm-ar')).absolutePath
     def cargoCommand = [resolveCargoExecutable()]
     if (useOndk()) cargoCommand << '+ondk'
     cargoCommand.addAll(['build', '--release', '--target', 'aarch64-linux-android'])
