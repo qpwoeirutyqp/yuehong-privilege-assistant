@@ -36,17 +36,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          log-accepted-android-sdk-licenses: true
-
       - name: Install SDK components
         run: |
           set -x
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           echo "SDK_ROOT=$SDK_ROOT"
-          SDKM=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -name sdkmanager -type f | sort | tail -1)
+          SDKM=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort | tail -1)
+          if [ -z "$SDKM" ]; then
+            echo "sdkmanager not found; trying to fetch cmdline-tools"
+            mkdir -p "$SDK_ROOT/cmdline-tools"
+            curl -fsSL -o /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+            unzip -q -o /tmp/clt.zip -d /tmp/clt
+            mv /tmp/clt/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+            SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
           echo "SDKM=$SDKM"
           yes | "$SDKM" --sdk_root="$SDK_ROOT" --licenses > /dev/null 2>&1 || true
           yes | "$SDKM" --sdk_root="$SDK_ROOT" \
@@ -74,7 +77,7 @@ jobs:
       - name: Write local.properties
         run: |
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          printf 'sdk.dir=%s\nndk.dir=%s/ndk/%s\n' "$SDK_ROOT" "$SDK_ROOT" "$NDK_VERSION" > local.properties
+          printf 'sdk.dir=%s\nndk.dir=%s/ndk/%s\napi.useLocal=false\n' "$SDK_ROOT" "$SDK_ROOT" "$NDK_VERSION" > local.properties
           cat local.properties
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
