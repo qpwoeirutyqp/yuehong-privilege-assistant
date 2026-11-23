@@ -13,7 +13,7 @@ on:
         options: [ Debug, Release ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -112,3 +112,18 @@ jobs:
           path: artifacts/*.apk
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Publish release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="build-${GITHUB_RUN_NUMBER}"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "月虹提权助手 ${TAG}" \
+              --notes "GitHub Actions 自动构建 · commit ${GITHUB_SHA} · ${{ github.event.inputs.variant || 'Debug' }}" \
+              --latest
+          fi
+          gh release upload "$TAG" artifacts/*.apk --repo "$GITHUB_REPOSITORY" --clobber
+          echo "RELEASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"
